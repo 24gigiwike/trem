@@ -4,11 +4,16 @@ import { Download, Megaphone, Pencil, PlusCircle, Search, Trash2 } from 'lucide-
 import { useApp } from '../../context/AppContext';
 import type { PropertyListing } from '../../shared/types';
 import { formatMoney } from '../../shared/commercial';
+import {
+  bulkUpdateVendorPropertiesLocal,
+  deleteVendorPropertyLocal,
+  getVendorPropertiesLocal,
+} from '../../lib/localStore';
 import { PortalShell } from '../../components/PortalShell';
 import { SafeImage } from '../../components/SafeImage';
 
 export function VendorPropertiesPage() {
-  const { apiFetch } = useApp();
+  const { vendorProfile } = useApp();
   const [searchParams] = useSearchParams();
 
   const [properties, setProperties] = useState<PropertyListing[]>([]);
@@ -20,34 +25,30 @@ export function VendorPropertiesPage() {
   const [actionMsg, setActionMsg] = useState('');
 
   const loadProperties = () => {
-    setLoading(true);
-    apiFetch<{ properties: PropertyListing[] }>('/api/vendor/properties')
-      .then((res) => setProperties(res.properties))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    if (!vendorProfile) return;
+    setProperties(getVendorPropertiesLocal(vendorProfile.id));
+    setLoading(false);
   };
 
   useEffect(() => {
     loadProperties();
-  }, []);
+  }, [vendorProfile]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
-  const handleBulkAction = async (action: 'mark_sold' | 'move_to_draft') => {
-    if (selectedIds.length === 0) return;
-    await apiFetch('/api/vendor/properties/bulk', {
-      method: 'POST',
-      body: JSON.stringify({ propertyIds: selectedIds, action }),
-    });
+  const handleBulkAction = (action: 'mark_sold' | 'move_to_draft') => {
+    if (!vendorProfile || selectedIds.length === 0) return;
+    bulkUpdateVendorPropertiesLocal(vendorProfile.id, selectedIds, action);
     setActionMsg(`Updated ${selectedIds.length} listing(s).`);
     setSelectedIds([]);
     loadProperties();
   };
 
-  const handleDelete = async (id: string) => {
-    await apiFetch(`/api/vendor/properties/${id}`, { method: 'DELETE' });
+  const handleDelete = (id: string) => {
+    if (!vendorProfile) return;
+    deleteVendorPropertyLocal(vendorProfile.id, id);
     setActionMsg('Listing removed.');
     loadProperties();
   };

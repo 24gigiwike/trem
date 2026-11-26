@@ -2,29 +2,37 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Plus, ShieldCheck, Trash2, UploadCloud } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import {
+  addVendorTeamLocal,
+  deleteVendorTeamLocal,
+  getBillingOverviewLocal,
+  getVendorEnquiriesLocal,
+  getVendorKycLocal,
+  getVendorTeamLocal,
+  submitVendorKycLocal,
+  updateVendorEnquiryStatusLocal,
+  updateVendorProfileLocal,
+} from '../../lib/localStore';
 import type { AgencyTeamMember, EnquiryRecord, KycDocument, PaymentOrder, SubscriptionRecord } from '../../shared/types';
 import { PortalShell } from '../../components/PortalShell';
 
 export function VendorLeadsPage() {
-  const { apiFetch } = useApp();
+  const { vendorProfile } = useApp();
   const [enquiries, setEnquiries] = useState<EnquiryRecord[]>([]);
   const [filter, setFilter] = useState('all');
 
   const load = () => {
-    apiFetch<{ enquiries: EnquiryRecord[] }>('/api/vendor/enquiries')
-      .then((res) => setEnquiries(res.enquiries))
-      .catch(() => {});
+    if (!vendorProfile) return;
+    setEnquiries(getVendorEnquiriesLocal(vendorProfile.id));
   };
 
   useEffect(() => {
     load();
-  }, []);
+  }, [vendorProfile?.id]);
 
   const updateStatus = async (id: string, status: EnquiryRecord['status']) => {
-    await apiFetch(`/api/vendor/enquiries/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    });
+    if (!vendorProfile) return;
+    updateVendorEnquiryStatusLocal(vendorProfile.id, id, status);
     load();
   };
 
@@ -110,18 +118,16 @@ export function VendorLeadsPage() {
 }
 
 export function VendorBillingPage() {
-  const { apiFetch } = useApp();
+  const { vendorProfile } = useApp();
   const [sub, setSub] = useState<SubscriptionRecord | null>(null);
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
 
   useEffect(() => {
-    apiFetch<{ subscription: SubscriptionRecord | null; orders: PaymentOrder[] }>('/api/billing/overview')
-      .then((res) => {
-        setSub(res.subscription);
-        setOrders(res.orders);
-      })
-      .catch(() => {});
-  }, [apiFetch]);
+    if (!vendorProfile) return;
+    const res = getBillingOverviewLocal(vendorProfile.id);
+    setSub(res.subscription);
+    setOrders(res.orders);
+  }, [vendorProfile?.id]);
 
   return (
     <PortalShell title="Subscription & Billing">
@@ -192,7 +198,7 @@ export function VendorBillingPage() {
 }
 
 export function VendorKycPage() {
-  const { apiFetch, refreshSession } = useApp();
+  const { vendorProfile, refreshSession } = useApp();
   const [status, setStatus] = useState('unverified');
   const [notes, setNotes] = useState('');
   const [rcNumber, setRcNumber] = useState('');
@@ -203,21 +209,19 @@ export function VendorKycPage() {
   const [msg, setMsg] = useState('');
 
   const load = () => {
-    apiFetch<{ verificationStatus: string; verificationNotes: string; rcNumber: string; tinNumber: string; scumlNumber: string; documents: KycDocument[] }>('/api/vendor/kyc')
-      .then((res) => {
-        setStatus(res.verificationStatus);
-        setNotes(res.verificationNotes);
-        setRcNumber(res.rcNumber);
-        setTinNumber(res.tinNumber);
-        setScumlNumber(res.scumlNumber);
-        setDocs(res.documents);
-      })
-      .catch(() => {});
+    if (!vendorProfile) return;
+    const res = getVendorKycLocal(vendorProfile.id);
+    setStatus(res.verificationStatus);
+    setNotes(res.verificationNotes);
+    setRcNumber(res.rcNumber);
+    setTinNumber(res.tinNumber);
+    setScumlNumber(res.scumlNumber);
+    setDocs(res.documents);
   };
 
   useEffect(() => {
     load();
-  }, []);
+  }, [vendorProfile?.id]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, docType: 'representative_id' | 'cac_cert' | 'scuml_cert', docLabel: string) => {
     const file = e.target.files?.[0];
@@ -228,21 +232,15 @@ export function VendorKycPage() {
       reader.onerror = () => reject(new Error('Read error'));
       reader.readAsDataURL(file);
     });
-    const res = await apiFetch<{ fileName: string; fileUrl: string }>('/api/uploads', {
-      method: 'POST',
-      body: JSON.stringify({ fileName: file.name, mimeType: file.type, dataBase64: base64 }),
-    });
-    setPendingDocs((prev) => [...prev, { docType, docLabel, fileName: res.fileName, fileUrl: res.fileUrl }]);
+    setPendingDocs((prev) => [...prev, { docType, docLabel, fileName: file.name, fileUrl: base64 }]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiFetch('/api/vendor/kyc', {
-      method: 'POST',
-      body: JSON.stringify({ rcNumber, tinNumber, scumlNumber, documents: pendingDocs }),
-    });
+    if (!vendorProfile) return;
+    submitVendorKycLocal(vendorProfile.id, { rcNumber, tinNumber, scumlNumber, documents: pendingDocs });
     setPendingDocs([]);
-    setMsg('Verification documents submitted for admin review.');
+    setMsg('Verification documents saved in your local vendor workspace.');
     await refreshSession();
     load();
   };
@@ -334,7 +332,8 @@ export function VendorKycPage() {
 }
 
 export function VendorSettingsPage() {
-  const { vendorProfile, apiFetch, refreshSession } = useApp();
+  const { vendorProfile, refreshSession } = useApp();
+  const isAgency = vendorProfile?.entityType === 'agency';
   const [businessName, setBusinessName] = useState(vendorProfile?.businessName || '');
   const [address, setAddress] = useState(vendorProfile?.address || '');
   const [abujaAddress, setAbujaAddress] = useState(vendorProfile?.abujaAddress || '');
@@ -348,31 +347,36 @@ export function VendorSettingsPage() {
   const [newPhone, setNewPhone] = useState('');
 
   const loadTeam = () => {
-    apiFetch<{ team: AgencyTeamMember[] }>('/api/vendor/team')
-      .then((res) => setTeam(res.team))
-      .catch(() => {});
+    if (!vendorProfile) return;
+    setTeam(getVendorTeamLocal(vendorProfile.id));
   };
 
   useEffect(() => {
-    loadTeam();
-  }, []);
+    if (vendorProfile) {
+      setBusinessName(vendorProfile.businessName || '');
+      setAddress(vendorProfile.address || '');
+      setAbujaAddress(vendorProfile.abujaAddress || '');
+      setBio(vendorProfile.bio || '');
+      loadTeam();
+    }
+  }, [vendorProfile?.id]);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    await apiFetch('/api/vendor/profile', {
-      method: 'PATCH',
-      body: JSON.stringify({ businessName, address, abujaAddress, bio }),
-    });
+    if (!vendorProfile) return;
+    updateVendorProfileLocal(vendorProfile.id, { businessName, address, abujaAddress, bio });
     await refreshSession();
-    setSavedMsg('Agency profile updated.');
+    setSavedMsg(`${isAgency ? 'Agency' : 'Vendor'} profile updated.`);
   };
 
   const handleAddTeam = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim() || !newTitle.trim()) return;
-    await apiFetch('/api/vendor/team', {
-      method: 'POST',
-      body: JSON.stringify({ fullName: newName, title: newTitle, credentials: newCreds, phone: newPhone }),
+    if (!vendorProfile || !newName.trim() || !newTitle.trim()) return;
+    addVendorTeamLocal(vendorProfile.id, {
+      fullName: newName,
+      title: newTitle,
+      credentials: newCreds,
+      phone: newPhone,
     });
     setNewName('');
     setNewTitle('');
@@ -382,15 +386,18 @@ export function VendorSettingsPage() {
   };
 
   const handleDeleteTeam = async (id: string) => {
-    await apiFetch(`/api/vendor/team/${id}`, { method: 'DELETE' });
+    if (!vendorProfile) return;
+    deleteVendorTeamLocal(vendorProfile.id, id);
     loadTeam();
   };
 
   return (
-    <PortalShell title="Agency Settings">
+    <PortalShell title={isAgency ? 'Agency Settings' : 'Vendor Settings'}>
       <div className="space-y-6">
         <form onSubmit={handleSaveProfile} className="bg-white rounded-lg border border-[#DCE3F0] p-6 space-y-4">
-          <h1 className="font-display font-extrabold text-xl text-[#0B1B48]">Agency & Microsite Profile</h1>
+          <h1 className="font-display font-extrabold text-xl text-[#0B1B48]">
+            {isAgency ? 'Agency & Microsite Profile' : 'Vendor Profile & Contact Info'}
+          </h1>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold mb-1">Business Name</label>
@@ -406,7 +413,7 @@ export function VendorSettingsPage() {
             <input type="text" value={abujaAddress} onChange={(e) => setAbujaAddress(e.target.value)} className="w-full px-3 py-2 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-bold mb-1">Brokerage Overview / Bio</label>
+            <label className="block text-xs font-bold mb-1">{isAgency ? 'Brokerage Overview / Bio' : 'Vendor Overview / Bio'}</label>
             <textarea rows={3} value={bio} onChange={(e) => setBio(e.target.value)} className="w-full px-3 py-2 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm" />
           </div>
           {savedMsg && (
@@ -416,7 +423,7 @@ export function VendorSettingsPage() {
             </div>
           )}
           <button type="submit" className="px-5 py-2.5 rounded-md bg-[#0B1B48] text-white text-xs font-bold">
-            Save Agency Settings
+            {isAgency ? 'Save Agency Settings' : 'Save Vendor Settings'}
           </button>
         </form>
 

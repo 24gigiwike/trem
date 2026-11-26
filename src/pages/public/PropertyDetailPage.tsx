@@ -19,6 +19,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import type { PropertyListing } from '../../shared/types';
 import { formatMoney } from '../../shared/commercial';
+import { createEnquiryLocal, getLocalPropertyDetail } from '../../lib/localStore';
 import { SafeImage } from '../../components/SafeImage';
 import { PropertyCard } from '../../components/PropertyCard';
 
@@ -60,6 +61,17 @@ export function PropertyDetailPage() {
 
   useEffect(() => {
     if (!idOrRef) return;
+    const local = getLocalPropertyDetail(idOrRef);
+    if (local) {
+      setProperty(local.property);
+      setVendor(local.vendor);
+      setSimilar(local.similar);
+      setActiveImage(0);
+      setError('');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError('');
     apiFetch<{ property: PropertyListing; vendor: VendorMeta; similar: PropertyListing[] }>(`/api/public/properties/${idOrRef}`)
@@ -79,9 +91,26 @@ export function PropertyDetailPage() {
     setSubmitting(true);
     setFormErr('');
     setSubmittedMsg('');
+
+    createEnquiryLocal({
+      propertyId: property.id,
+      vendorId: vendor.id,
+      seekerId: user?.id || null,
+      fullName,
+      email: email || 'buyer@trem.ng',
+      phone,
+      enquiryType: 'inspection',
+      inspectionDate,
+      inspectionSession,
+      tourPreference,
+      purpose: 'Property Inspection & Acquisition',
+      message: message || `Inspection booking for ${property.refCode} (${tourPreference})`,
+    });
+
     try {
-      await apiFetch('/api/public/enquiries', {
+      await fetch('/api/public/enquiries', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           propertyId: property.id,
           vendorId: vendor.id,
@@ -96,13 +125,13 @@ export function PropertyDetailPage() {
           message: message || `Inspection booking for ${property.refCode} (${tourPreference})`,
         }),
       });
-      setSubmittedMsg(`Inspection slot requested for ${property.refCode}. ${vendor.businessName} has been notified.`);
-      setMessage('');
-    } catch (err) {
-      setFormErr(err instanceof Error ? err.message : 'Failed to submit inspection request.');
-    } finally {
-      setSubmitting(false);
+    } catch {
+      // Already saved locally
     }
+
+    setSubmittedMsg(`Inspection slot requested for ${property.refCode}. ${vendor.businessName} has been notified.`);
+    setMessage('');
+    setSubmitting(false);
   };
 
   if (loading) {

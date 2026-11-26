@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { PublicShell } from './components/PublicShell';
 import { HomePage } from './pages/public/HomePage';
@@ -41,35 +41,32 @@ function ScrollManager() {
 }
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, loadingSession } = useApp();
-  if (loadingSession) {
-    return (
-      <div className="max-w-[1100px] mx-auto px-4 py-16">
-        <div className="h-48 rounded-2xl bg-white border border-[#DCE3F0] animate-pulse" />
-      </div>
-    );
-  }
-  if (!user) {
-    return <Navigate to="/auth?mode=login" replace />;
-  }
+  const { user, ensureOpenRole } = useApp();
+
+  useEffect(() => {
+    if (!user) {
+      ensureOpenRole('seeker');
+    }
+  }, [user, ensureOpenRole]);
+
   return <>{children}</>;
 }
 
 function RequireVendor({ children }: { children: React.ReactNode }) {
-  const { user, loadingSession } = useApp();
-  if (loadingSession) {
+  const { user, vendorProfile, ensureOpenRole } = useApp();
+
+  useEffect(() => {
+    if (!user || (user.role !== 'vendor' && user.role !== 'agency')) {
+      ensureOpenRole('agency');
+    }
+  }, [user, ensureOpenRole]);
+
+  if (!user || !vendorProfile || (user.role !== 'vendor' && user.role !== 'agency')) {
     return (
       <div className="min-h-screen bg-[#F4F6FA] flex items-center justify-center p-6">
-        <div className="w-full max-w-md h-40 rounded-2xl bg-white border border-[#DCE3F0] animate-pulse" />
+        <div className="w-full max-w-md h-40 rounded-lg bg-white border border-[#DCE3F0] animate-pulse" />
       </div>
     );
-  }
-  if (!user) {
-    return <Navigate to="/auth?mode=login" replace />;
-  }
-  if (user.role !== 'vendor' && user.role !== 'agency') {
-    if (user.role === 'admin') return <Navigate to="/admin" replace />;
-    return <Navigate to="/seeker" replace />;
   }
   return <>{children}</>;
 }

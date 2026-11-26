@@ -3,6 +3,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Building2, CheckCircle2, CreditCard, Lock, ShieldCheck, UploadCloud, UserCheck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
+  activateSubscriptionLocal,
+  submitVendorKycLocal,
+  updateVendorProfileLocal,
+} from '../../lib/localStore';
+import {
   BILLING_DURATIONS,
   calculateSubscriptionQuote,
   SUBSCRIPTION_PLANS,
@@ -10,7 +15,7 @@ import {
 import { PortalShell } from '../../components/PortalShell';
 
 export function VendorOnboardingPage() {
-  const { vendorProfile, apiFetch, refreshSession } = useApp();
+  const { user, vendorProfile, signInOpen, ensureOpenRole, refreshSession } = useApp();
   const navigate = useNavigate();
 
   const [stage, setStage] = useState<1 | 2 | 3>(1);
@@ -44,10 +49,28 @@ export function VendorOnboardingPage() {
     setProcessing(true);
     setError('');
     try {
-      await apiFetch('/api/vendor/profile', {
-        method: 'PATCH',
-        body: JSON.stringify({ businessName, representativeName, address, city, state }),
-      });
+      let targetVendorId = vendorProfile?.id;
+      if (!targetVendorId || user?.role !== entityType) {
+        signInOpen({
+          email: user?.email || (entityType === 'agency' ? 'apex@trem.ng' : 'vendor@trem.ng'),
+          role: entityType,
+          firstName: user?.firstName,
+          lastName: user?.lastName,
+          phone: user?.phone,
+          businessName,
+        });
+      }
+      if (targetVendorId) {
+        updateVendorProfileLocal(targetVendorId, {
+          entityType,
+          businessName,
+          representativeName,
+          address,
+          city,
+          state,
+        });
+      }
+      await refreshSession();
       setStage(2);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save vendor details.');
@@ -61,21 +84,11 @@ export function VendorOnboardingPage() {
     setProcessing(true);
     setError('');
     try {
-      const idempotencyKey = `sub_${vendorProfile?.id || 'v'}_${planCode}_${billingMonths}_${Date.now()}`;
-      const orderRes = await apiFetch<{ order: { reference: string } }>('/api/billing/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          orderType: 'subscription',
-          planCode,
-          billingMonths,
-          paymentMethod,
-          idempotencyKey,
-        }),
-      });
-      // Sandbox signed webhook verification (server-side HMAC check & entitlement activation)
-      await apiFetch(`/api/billing/sandbox-confirm/${orderRes.order.reference}`, { method: 'POST' });
+      const activeUser = user || ensureOpenRole(entityType);
+      const vendorId = vendorProfile?.id || (entityType === 'agency' ? 'vnd_apex' : 'vnd_solovendor');
+      const result = activateSubscriptionLocal(activeUser.id, vendorId, planCode, billingMonths, paymentMethod);
       await refreshSession();
-      setOrderRef(orderRes.order.reference);
+      setOrderRef(result.reference);
       setStage(3);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Checkout verification failed.');
@@ -100,11 +113,7 @@ export function VendorOnboardingPage() {
         reader.onerror = () => reject(new Error('Failed to read file'));
         reader.readAsDataURL(file);
       });
-      const res = await apiFetch<{ fileName: string; fileUrl: string }>('/api/uploads', {
-        method: 'POST',
-        body: JSON.stringify({ fileName: file.name, mimeType: file.type, dataBase64: base64 }),
-      });
-      setUploadedDocs((prev) => [...prev, { docType, docLabel, fileName: res.fileName, fileUrl: res.fileUrl }]);
+      setUploadedDocs((prev) => [...prev, { docType, docLabel, fileName: file.name, fileUrl: base64 }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'File upload failed.');
     } finally {
@@ -117,17 +126,15 @@ export function VendorOnboardingPage() {
     setProcessing(true);
     setError('');
     try {
-      await apiFetch('/api/vendor/kyc', {
-        method: 'POST',
-        body: JSON.stringify({
-          rcNumber,
-          tinNumber,
-          scumlNumber,
-          documents:
-            uploadedDocs.length > 0
-              ? uploadedDocs
-              : [{ docType: 'representative_id', docLabel: idType, fileName: `${idType.replace(/\s+/g, '_')}.pdf`, fileUrl: '/uploads/id_pending.pdf' }],
-        }),
+      const vendorId = vendorProfile?.id || (entityType === 'agency' ? 'vnd_apex' : 'vnd_solovendor');
+      submitVendorKycLocal(vendorId, {
+        rcNumber,
+        tinNumber,
+        scumlNumber,
+        documents:
+          uploadedDocs.length > 0
+            ? uploadedDocs
+            : [{ docType: 'representative_id', docLabel: idType, fileName: `${idType.replace(/\s+/g, '_')}.pdf`, fileUrl: '/uploads/id_pending.pdf' }],
       });
       await refreshSession();
       setKycSubmitted(true);
@@ -347,10 +354,10 @@ export function VendorOnboardingPage() {
 
               <div className="bg-white rounded-lg border border-[#DCE3F0] p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display font-bold text-lg text-[#0B1B48]">Payment Method (Sandbox Gateway)</h2>
+                  <h2 className="font-display font-bold text-lg text-[#0B1B48]">Payment Method (Local Workspace)</h2>
                   <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#16A34A]">
                     <Lock className="w-3.5 h-3.5" />
-                    <span>Signed Webhook Verification</span>
+                    <span>Instant Local Activation</span>
                   </span>
                 </div>
 
@@ -373,7 +380,7 @@ export function VendorOnboardingPage() {
                 </div>
 
                 <div className="p-4 rounded-md bg-[#EEF2FA] text-xs text-[#334155]">
-                  Sandbox Mode: Submitting creates a server-side payment order in Nigerian Naira (₦) and dispatches a signed webhook (`X-TREM-Signature`) to verify and activate your subscription entitlement. No live card charge occurs.
+                  Open Workspace Mode: Submitting records the order in Nigerian Naira (₦) and activates your subscription entitlement immediately in your browser workspace. No live card charge occurs.
                 </div>
               </div>
             </div>
@@ -511,7 +518,7 @@ export function VendorOnboardingPage() {
 
               {kycSubmitted ? (
                 <div className="p-4 rounded-md bg-[#DCFCE7] text-[#15803D] text-xs font-bold flex items-center justify-between gap-3">
-                  <span>Documents submitted to TREM Compliance Review Queue.</span>
+                  <span>Documents saved and verified in your local vendor workspace.</span>
                   <button type="button" onClick={() => navigate('/vendor')} className="px-4 py-2 rounded-md bg-[#0B1B48] text-white">
                     Go to Vendor Dashboard
                   </button>

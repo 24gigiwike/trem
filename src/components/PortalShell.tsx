@@ -15,6 +15,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { getNotificationsLocal, markAllNotificationsReadLocal } from '../lib/localStore';
 import { TremLogo } from './TremLogo';
 import type { NotificationItem } from '../shared/types';
 
@@ -25,22 +26,22 @@ export function PortalShell({
   children: React.ReactNode;
   title?: string;
 }) {
-  const { vendorProfile, subscription, logout, unreadNotifications, apiFetch, refreshSession } = useApp();
+  const { user, vendorProfile, subscription, logout, unreadNotifications, refreshSession } = useApp();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifs, setNotifs] = useState<NotificationItem[]>([]);
 
   useEffect(() => {
-    if (showNotifs) {
-      apiFetch<{ notifications: NotificationItem[] }>('/api/notifications')
-        .then((res) => setNotifs(res.notifications))
-        .catch(() => {});
+    if (showNotifs && user) {
+      setNotifs(getNotificationsLocal(user.id));
     }
-  }, [showNotifs, apiFetch]);
+  }, [showNotifs, user]);
 
   const handleMarkRead = async () => {
-    await apiFetch('/api/notifications/read-all', { method: 'POST' });
+    if (user) {
+      markAllNotificationsReadLocal(user.id);
+    }
     await refreshSession();
     setNotifs((prev) => prev.map((n) => ({ ...n, isRead: true })));
   };
@@ -65,7 +66,7 @@ export function PortalShell({
       icon: ShieldCheck,
       badge: vendorProfile?.verificationStatus === 'verified' ? 'Verified' : vendorProfile?.verificationStatus === 'pending' ? 'Pending' : undefined,
     },
-    { to: '/vendor/settings', label: 'Agency Settings', icon: Settings },
+    { to: '/vendor/settings', label: vendorProfile?.entityType === 'agency' ? 'Agency Settings' : 'Vendor Settings', icon: Settings },
   ];
 
   return (
@@ -73,7 +74,7 @@ export function PortalShell({
       <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 bg-white border-r border-[#DCE3F0] sticky top-0 h-screen">
         <div className="h-16 px-5 flex items-center justify-between border-b border-[#DCE3F0]">
           <Link to="/">
-            <TremLogo subtitle="Vendor Portal" />
+            <TremLogo subtitle={vendorProfile?.entityType === 'agency' ? 'Agency Portal' : 'Vendor Portal'} />
           </Link>
         </div>
 

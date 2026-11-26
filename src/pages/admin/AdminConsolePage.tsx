@@ -19,7 +19,7 @@ interface AdminVendorRow {
 }
 
 export function AdminConsolePage() {
-  const { user, apiFetch, setAuthSession, logout } = useApp();
+  const { adminUser, apiFetch, setAdminSession, logoutAdmin } = useApp();
   const navigate = useNavigate();
 
   const [adminStatus, setAdminStatus] = useState<{ envConfigured: boolean; claimed: boolean } | null>(null);
@@ -43,7 +43,7 @@ export function AdminConsolePage() {
   const [orders, setOrders] = useState<Array<PaymentOrder & { business_name?: string }>>([]);
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = adminUser?.role === 'admin';
 
   useEffect(() => {
     apiFetch<{ envConfigured: boolean; claimed: boolean }>('/api/auth/admin-status')
@@ -85,7 +85,7 @@ export function AdminConsolePage() {
         method: 'POST',
         body: JSON.stringify({ email: adminEmail, passcode }),
       });
-      await setAuthSession(res.token, res.user);
+      setAdminSession(res.token, res.user);
       setPasscode('');
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Admin authentication failed.');
@@ -194,7 +194,7 @@ export function AdminConsolePage() {
           <button
             type="button"
             onClick={async () => {
-              await logout();
+              await logoutAdmin();
               navigate('/');
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold"

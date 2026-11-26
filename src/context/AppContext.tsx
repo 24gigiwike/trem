@@ -1,15 +1,47 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useState } from 'react';
 import type { SubscriptionRecord, UserAccount, VendorProfile } from '../shared/types';
+import {
+  ensureOpenWorkspaceUser,
+  getActiveSessionUser,
+  getContextForUser,
+  logoutLocal,
+  type PublicAccountRole,
+  registerLocal,
+  signInLocal,
+  toggleSavedLocal,
+  updateProfileLocal,
+} from '../lib/localStore';
 
 interface AppContextValue {
   token: string | null;
+  adminUser: UserAccount | null;
   user: UserAccount | null;
   vendorProfile: VendorProfile | null;
   subscription: SubscriptionRecord | null;
   unreadNotifications: number;
   savedIds: string[];
   loadingSession: boolean;
-  setAuthSession: (token: string, user: UserAccount) => Promise<void>;
+  signInOpen: (input: {
+    email: string;
+    role: PublicAccountRole;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    businessName?: string;
+  }) => UserAccount;
+  registerOpen: (input: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    role: PublicAccountRole;
+    businessName?: string;
+    representativeRole?: string;
+  }) => UserAccount;
+  ensureOpenRole: (role: PublicAccountRole) => UserAccount;
+  updateProfile: (patch: { firstName: string; lastName: string; phone: string }) => void;
+  setAdminSession: (token: string, admin: UserAccount) => void;
+  logoutAdmin: () => Promise<void>;
   refreshSession: () => Promise<void>;
   logout: () => Promise<void>;
   toggleSaved: (propertyId: string) => Promise<boolean>;
@@ -19,24 +51,123 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  // Token kept strictly in React memory (never persisted in localStorage/sessionStorage)
+  // Admin bearer token kept strictly in React memory for /admin governance
   const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<UserAccount | null>(null);
-  const [vendorProfile, setVendorProfile] = useState<VendorProfile | null>(null);
-  const [subscription, setSubscription] = useState<SubscriptionRecord | null>(null);
-  const [unreadNotifications, setUnreadNotifications] = useState(0);
-  const [savedIds, setSavedIds] = useState<string[]>([]);
-  const [loadingSession, setLoadingSession] = useState(false);
+  const [adminUser, setAdminUser] = useState<UserAccount | null>(null);
+
+  const initialState = getContextForUser(getActiveSessionUser());
+  const [user, setUser] = useState<UserAccount | null>(initialState.user);
+  const [vendorProfile, setVendorProfile] = useState<VendorProfile | null>(initialState.vendorProfile);
+  const [subscription, setSubscription] = useState<SubscriptionRecord | null>(initialState.subscription);
+  const [unreadNotifications, setUnreadNotifications] = useState(initialState.unreadNotifications);
+  const [savedIds, setSavedIds] = useState<string[]>(initialState.savedIds);
+
+  const syncFromUser = useCallback((nextUser: UserAccount | null) => {
+    const ctx = getContextForUser(nextUser);
+    setUser(ctx.user);
+    setVendorProfile(ctx.vendorProfile);
+    setSubscription(ctx.subscription);
+    setUnreadNotifications(ctx.unreadNotifications);
+    setSavedIds(ctx.savedIds);
+  }, []);
+
+  const refreshSession = useCallback(async () => {
+    syncFromUser(getActiveSessionUser());
+  }, [syncFromUser]);
+
+  const signInOpen = useCallback(
+    (input: {
+      email: string;
+      role: PublicAccountRole;
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      businessName?: string;
+    }) => {
+      const nextUser = signInLocal(input);
+      syncFromUser(nextUser);
+      return nextUser;
+    },
+    [syncFromUser]
+  );
+
+  const registerOpen = useCallback(
+    (input: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone: string;
+      role: PublicAccountRole;
+      businessName?: string;
+      representativeRole?: string;
+    }) => {
+      const nextUser = registerLocal(input);
+      syncFromUser(nextUser);
+      return nextUser;
+    },
+    [syncFromUser]
+  );
+
+  const ensureOpenRole = useCallback(
+    (targetRole: PublicAccountRole) => {
+      const nextUser = ensureOpenWorkspaceUser(targetRole);
+      syncFromUser(nextUser);
+      return nextUser;
+    },
+    [syncFromUser]
+  );
+
+  const updateProfile = useCallback(
+    (patch: { firstName: string; lastName: string; phone: string }) => {
+      const updated = updateProfileLocal(patch);
+      syncFromUser(updated);
+    },
+    [syncFromUser]
+  );
+
+  const logout = useCallback(async () => {
+    logoutLocal();
+    syncFromUser(null);
+  }, [syncFromUser]);
+
+  const setAdminSession = useCallback((newToken: string, admin: UserAccount) => {
+    setToken(newToken);
+    setAdminUser(admin);
+  }, []);
+
+  const logoutAdmin = useCallback(async () => {
+    if (token) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // Ignore errors during admin sign out
+      }
+    }
+    setToken(null);
+    setAdminUser(null);
+  }, [token]);
+
+  const toggleSaved = useCallback(
+    async (propertyId: string): Promise<boolean> => {
+      const activeUser = getActiveSessionUser();
+      const nextIds = toggleSavedLocal(propertyId, activeUser);
+      setSavedIds(nextIds);
+      return true;
+    },
+    []
+  );
 
   const apiFetch = useCallback(
-    async <T = unknown>(url: string, options: RequestInit = {}, overrideToken?: string | null): Promise<T> => {
-      const activeToken = overrideToken !== undefined ? overrideToken : token;
+    async <T = unknown>(url: string, options: RequestInit = {}): Promise<T> => {
       const headers = new Headers(options.headers || {});
       if (!headers.has('Content-Type') && options.body && typeof options.body === 'string') {
         headers.set('Content-Type', 'application/json');
       }
-      if (activeToken) {
-        headers.set('Authorization', `Bearer ${activeToken}`);
+      if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
       }
       const res = await fetch(url, { ...options, headers });
       const data = await res.json().catch(() => ({}));
@@ -48,101 +179,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [token]
   );
 
-  const loadAccountContext = useCallback(
-    async (activeToken: string) => {
-      setLoadingSession(true);
-      try {
-        const me = await apiFetch<{
-          user: UserAccount;
-          vendorProfile: VendorProfile | null;
-          subscription: SubscriptionRecord | null;
-          unreadNotifications: number;
-        }>('/api/auth/me', {}, activeToken);
-        setUser(me.user);
-        setVendorProfile(me.vendorProfile);
-        setSubscription(me.subscription);
-        setUnreadNotifications(me.unreadNotifications || 0);
-
-        const savedRes = await apiFetch<{ saved: Array<{ id: string }> }>('/api/seeker/saved', {}, activeToken);
-        setSavedIds(savedRes.saved.map((p) => p.id));
-      } catch {
-        setToken(null);
-        setUser(null);
-        setVendorProfile(null);
-        setSubscription(null);
-        setSavedIds([]);
-      } finally {
-        setLoadingSession(false);
-      }
-    },
-    [apiFetch]
-  );
-
-  const setAuthSession = useCallback(
-    async (newToken: string, initialUser: UserAccount) => {
-      setToken(newToken);
-      setUser(initialUser);
-      await loadAccountContext(newToken);
-    },
-    [loadAccountContext]
-  );
-
-  const refreshSession = useCallback(async () => {
-    if (!token) return;
-    await loadAccountContext(token);
-  }, [token, loadAccountContext]);
-
-  const logout = useCallback(async () => {
-    if (token) {
-      try {
-        await apiFetch('/api/auth/logout', { method: 'POST' });
-      } catch {
-        // Ignore errors during logout cleanup
-      }
-    }
-    setToken(null);
-    setUser(null);
-    setVendorProfile(null);
-    setSubscription(null);
-    setSavedIds([]);
-    setUnreadNotifications(0);
-  }, [token, apiFetch]);
-
-  const toggleSaved = useCallback(
-    async (propertyId: string): Promise<boolean> => {
-      if (!token) {
-        return false;
-      }
-      const res = await apiFetch<{ saved: boolean }>(`/api/seeker/saved/${propertyId}`, { method: 'POST' });
-      setSavedIds((prev) => (res.saved ? Array.from(new Set([...prev, propertyId])) : prev.filter((id) => id !== propertyId)));
-      return true;
-    },
-    [token, apiFetch]
-  );
-
-  useEffect(() => {
-    if (!token) {
-      setUser(null);
-      setVendorProfile(null);
-      setSubscription(null);
-    }
-  }, [token]);
-
   return (
     <AppContext.Provider
       value={{
         token,
+        adminUser,
         user,
         vendorProfile,
         subscription,
         unreadNotifications,
         savedIds,
-        loadingSession,
-        setAuthSession,
+        loadingSession: false,
+        signInOpen,
+        registerOpen,
+        ensureOpenRole,
+        updateProfile,
+        setAdminSession,
+        logoutAdmin,
         refreshSession,
         logout,
         toggleSaved,
-        apiFetch: (url, options) => apiFetch(url, options),
+        apiFetch,
       }}
     >
       {children}

@@ -3,10 +3,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Bookmark, CheckCircle2, Compass, LogOut, MessageSquare, Search, User } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import type { EnquiryRecord, PropertyListing } from '../../shared/types';
+import { getSavedPropertiesLocal, getSeekerEnquiriesLocal } from '../../lib/localStore';
 import { PropertyCard } from '../../components/PropertyCard';
 
 export function SeekerPortalPage() {
-  const { user, apiFetch, logout, refreshSession } = useApp();
+  const { user, savedIds, logout, updateProfile } = useApp();
   const navigate = useNavigate();
 
   const [tab, setTab] = useState<'overview' | 'saved' | 'enquiries' | 'profile'>('overview');
@@ -20,42 +21,26 @@ export function SeekerPortalPage() {
   const [profileMsg, setProfileMsg] = useState('');
 
   useEffect(() => {
-    if (!user) return;
-    setFirstName(user.firstName);
-    setLastName(user.lastName);
-    setPhone(user.phone);
+    if (user) {
+      setFirstName(user.firstName);
+      setLastName(user.lastName);
+      setPhone(user.phone);
+    }
+    setSavedProps(getSavedPropertiesLocal(user));
+    setEnquiries(getSeekerEnquiriesLocal(user));
+    setLoading(false);
+  }, [user, savedIds]);
 
-    setLoading(true);
-    Promise.all([
-      apiFetch<{ saved: PropertyListing[] }>('/api/seeker/saved'),
-      apiFetch<{ enquiries: EnquiryRecord[] }>('/api/seeker/enquiries'),
-    ])
-      .then(([sRes, eRes]) => {
-        setSavedProps(sRes.saved);
-        setEnquiries(eRes.enquiries);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [user, apiFetch]);
-
-  const handleProfileSave = async (e: React.FormEvent) => {
+  const handleProfileSave = (e: React.FormEvent) => {
     e.preventDefault();
-    await apiFetch('/api/auth/profile', {
-      method: 'PATCH',
-      body: JSON.stringify({ firstName, lastName, phone }),
-    });
-    await refreshSession();
-    setProfileMsg('Profile details updated.');
+    updateProfile({ firstName, lastName, phone });
+    setProfileMsg('Profile details saved locally.');
   };
 
   if (!user) {
     return (
       <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-4">
-        <h1 className="font-display font-bold text-2xl text-[#0B1B48]">Sign in to access your Seeker Dashboard</h1>
-        <p className="text-sm text-[#5A6782]">View saved properties, track inspection slots, and manage enquiries.</p>
-        <Link to="/auth?mode=login" className="inline-block px-6 py-2.5 rounded-md bg-[#0B1B48] text-white text-xs font-bold">
-          Sign In / Create Seeker Account
-        </Link>
+        <div className="h-32 rounded-lg bg-white border border-[#DCE3F0] animate-pulse" />
       </div>
     );
   }

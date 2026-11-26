@@ -4,6 +4,7 @@ import { ArrowRight, ArrowUpRight, CheckCircle2, Search, ShieldCheck, MessageSqu
 import { useApp } from '../../context/AppContext';
 import type { PropertyListing } from '../../shared/types';
 import { formatMoney, SUBSCRIPTION_PLANS } from '../../shared/commercial';
+import { queryLocalProperties } from '../../lib/localStore';
 import { PropertyCard } from '../../components/PropertyCard';
 import { SafeImage } from '../../components/SafeImage';
 
@@ -11,9 +12,10 @@ export function HomePage() {
   const { apiFetch } = useApp();
   const navigate = useNavigate();
 
-  const [featured, setFeatured] = useState<PropertyListing[]>([]);
-  const [counts, setCounts] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
+  const initialData = queryLocalProperties({ limit: 4, sort: 'featured' });
+  const [featured, setFeatured] = useState<PropertyListing[]>(initialData.items);
+  const [counts, setCounts] = useState<Record<string, number>>(initialData.categoryCounts);
+  const [loading, setLoading] = useState(false);
 
   const [purpose, setPurpose] = useState('buy');
   const [locationQuery, setLocationQuery] = useState('');
@@ -22,11 +24,23 @@ export function HomePage() {
   const [titleDoc, setTitleDoc] = useState('all');
 
   useEffect(() => {
-    setLoading(true);
+    const local = queryLocalProperties({ limit: 4, sort: 'featured' });
+    setFeatured(local.items);
+    setCounts(local.categoryCounts);
+
     apiFetch<{ items: PropertyListing[]; categoryCounts: Record<string, number> }>('/api/public/properties?limit=4&sort=featured')
       .then((res) => {
-        setFeatured(res.items);
-        setCounts(res.categoryCounts || {});
+        if (res.items && res.items.length > 0 && local.items.length <= 6) {
+          setFeatured(local.items.length > 0 ? local.items : res.items);
+        }
+        if (res.categoryCounts) {
+          setCounts((prev) => ({
+            residential: Math.max(prev.residential || 0, res.categoryCounts.residential || 0),
+            commercial: Math.max(prev.commercial || 0, res.categoryCounts.commercial || 0),
+            land_banking: Math.max(prev.land_banking || 0, res.categoryCounts.land_banking || 0),
+            buy_build: Math.max(prev.buy_build || 0, res.categoryCounts.buy_build || 0),
+          }));
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));

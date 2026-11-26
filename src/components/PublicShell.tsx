@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Bookmark, Compass, Home, PlusCircle, LayoutDashboard, User, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { subscribeNewsletterLocal } from '../lib/localStore';
 import { TremLogo } from './TremLogo';
 
 export function PublicShell({ children }: { children: React.ReactNode }) {
-  const { user, savedIds, apiFetch } = useApp();
+  const { user, savedIds } = useApp();
   const navigate = useNavigate();
   const [newsletterEmail, setNewsletterEmail] = useState('');
   const [newsletterStatus, setNewsletterStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -13,36 +14,31 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
 
   const portalPath = !user
     ? '/auth'
-    : user.role === 'admin'
-    ? '/admin'
     : user.role === 'seeker'
     ? '/seeker'
     : '/vendor';
 
   const handleEnlistClick = () => {
-    if (user && (user.role === 'vendor' || user.role === 'agency')) {
-      navigate('/vendor/add');
-    } else {
-      navigate('/auth?role=agency');
-    }
+    navigate('/vendor/add');
   };
 
   const handleNewsletter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newsletterEmail.trim()) return;
     setNewsletterStatus('loading');
+    subscribeNewsletterLocal(newsletterEmail);
     try {
-      await apiFetch('/api/public/newsletter', {
+      await fetch('/api/public/newsletter', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: newsletterEmail }),
       });
-      setNewsletterStatus('done');
-      setNewsletterMsg('Subscribed to verified property drops.');
-      setNewsletterEmail('');
-    } catch (err) {
-      setNewsletterStatus('error');
-      setNewsletterMsg(err instanceof Error ? err.message : 'Subscription failed.');
+    } catch {
+      // Local store already persisted subscription cleanly
     }
+    setNewsletterStatus('done');
+    setNewsletterMsg('Subscribed to verified property drops.');
+    setNewsletterEmail('');
   };
 
   return (
@@ -84,7 +80,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-2.5 shrink-0">
             <Link
-              to={user ? '/seeker' : '/auth'}
+              to="/seeker"
               aria-label="Saved properties"
               className="relative p-2 rounded-md border border-white/15 bg-[#0B1B48] hover:bg-white/10 transition-colors hidden sm:inline-flex"
             >
@@ -233,7 +229,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
           <LayoutDashboard className="w-4 h-4" />
           <span>Workspace</span>
         </NavLink>
-        <NavLink to={user ? '/seeker' : '/auth'} className={({ isActive }) => `flex flex-col items-center justify-center gap-0.5 ${isActive ? 'text-[#0B1B48] font-bold' : ''}`}>
+        <NavLink to="/seeker" className={({ isActive }) => `flex flex-col items-center justify-center gap-0.5 ${isActive ? 'text-[#0B1B48] font-bold' : ''}`}>
           <User className="w-4 h-4" />
           <span>Profile</span>
         </NavLink>

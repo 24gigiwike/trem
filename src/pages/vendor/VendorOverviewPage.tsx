@@ -4,11 +4,12 @@ import { ArrowRight, Building2, Eye, Megaphone, MessageSquare, PlusCircle, Shiel
 import { useApp } from '../../context/AppContext';
 import type { EnquiryRecord, PropertyListing, SubscriptionRecord, VendorProfile } from '../../shared/types';
 import { formatMoney, PROMOTION_PACKAGES } from '../../shared/commercial';
+import { getVendorOverviewLocal, updateVendorEnquiryStatusLocal } from '../../lib/localStore';
 import { PortalShell } from '../../components/PortalShell';
 import { SafeImage } from '../../components/SafeImage';
 
 interface VendorOverviewData {
-  vendor: VendorProfile & { verification_status?: string; business_name?: string; rc_number?: string };
+  vendor: VendorProfile;
   subscription: SubscriptionRecord | null;
   stats: {
     totalInventory: number;
@@ -26,27 +27,23 @@ interface VendorOverviewData {
 }
 
 export function VendorOverviewPage() {
-  const { apiFetch, vendorProfile } = useApp();
+  const { vendorProfile } = useApp();
   const [data, setData] = useState<VendorOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadOverview = () => {
-    setLoading(true);
-    apiFetch<VendorOverviewData>('/api/vendor/overview')
-      .then(setData)
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    if (!vendorProfile) return;
+    setData(getVendorOverviewLocal(vendorProfile.id));
+    setLoading(false);
   };
 
   useEffect(() => {
     loadOverview();
-  }, []);
+  }, [vendorProfile]);
 
-  const markLeadResponded = async (leadId: string) => {
-    await apiFetch(`/api/vendor/enquiries/${leadId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'responded' }),
-    });
+  const markLeadResponded = (leadId: string) => {
+    if (!vendorProfile) return;
+    updateVendorEnquiryStatusLocal(vendorProfile.id, leadId, 'responded');
     loadOverview();
   };
 

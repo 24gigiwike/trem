@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, CheckCircle2, ImagePlus, Save, ShieldCheck, Trash2, UploadCloud } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import type { PropertyCategory, PropertyListing, PropertyPurpose } from '../../shared/types';
+import type { PropertyCategory, PropertyPurpose } from '../../shared/types';
+import { getVendorPropertyByIdLocal, saveVendorPropertyLocal } from '../../lib/localStore';
 import { PortalShell } from '../../components/PortalShell';
 import { SafeImage } from '../../components/SafeImage';
 
@@ -41,7 +42,7 @@ const AMENITY_OPTIONS = [
 ];
 
 export function AddPropertyWizardPage() {
-  const { apiFetch, vendorProfile, subscription, user } = useApp();
+  const { vendorProfile, subscription, user } = useApp();
   const [searchParams] = useSearchParams();
   const editId = searchParams.get('edit');
   const navigate = useNavigate();
@@ -88,39 +89,36 @@ export function AddPropertyWizardPage() {
 
   useEffect(() => {
     if (!editId) return;
-    apiFetch<{ property: PropertyListing }>(`/api/public/properties/${editId}`)
-      .then((res) => {
-        const p = res.property;
-        setTitle(p.title);
-        setPurpose(p.purpose);
-        setCategory(p.category);
-        setSubcategory(p.subcategory);
-        setDescription(p.description);
-        setAddress(p.address);
-        setCorridor(p.corridor);
-        setLga(p.lga);
-        setCity(p.city);
-        setState(p.state);
-        setLatitude(p.latitude);
-        setLongitude(p.longitude);
-        setBeaconRef(p.beaconRef);
-        setBedrooms(p.bedrooms);
-        setBathrooms(p.bathrooms);
-        setAreaSqm(p.areaSqm);
-        setGarageBays(p.garageBays);
-        setYearBuilt(p.yearBuilt);
-        setSmartIot(p.smartIot);
-        setPriceNgn(p.priceNgn);
-        setPriceUnit(p.priceUnit);
-        setTitleDocType(p.titleDocType);
-        setSurveyPlanNo(p.surveyPlanNo);
-        setBureauFileNo(p.bureauFileNo);
-        setAmenities(p.amenities);
-        setImages(p.images);
-        setVideoUrl(p.videoUrl);
-      })
-      .catch(() => {});
-  }, [editId, apiFetch]);
+    const p = getVendorPropertyByIdLocal(editId);
+    if (!p) return;
+    setTitle(p.title);
+    setPurpose(p.purpose);
+    setCategory(p.category);
+    setSubcategory(p.subcategory);
+    setDescription(p.description);
+    setAddress(p.address);
+    setCorridor(p.corridor);
+    setLga(p.lga);
+    setCity(p.city);
+    setState(p.state);
+    setLatitude(p.latitude);
+    setLongitude(p.longitude);
+    setBeaconRef(p.beaconRef);
+    setBedrooms(p.bedrooms);
+    setBathrooms(p.bathrooms);
+    setAreaSqm(p.areaSqm);
+    setGarageBays(p.garageBays);
+    setYearBuilt(p.yearBuilt);
+    setSmartIot(p.smartIot);
+    setPriceNgn(p.priceNgn);
+    setPriceUnit(p.priceUnit);
+    setTitleDocType(p.titleDocType);
+    setSurveyPlanNo(p.surveyPlanNo);
+    setBureauFileNo(p.bureauFileNo);
+    setAmenities(p.amenities);
+    setImages(p.images);
+    setVideoUrl(p.videoUrl);
+  }, [editId]);
 
   const healthScore = useMemo(() => {
     let score = 20;
@@ -146,17 +144,9 @@ export function AddPropertyWizardPage() {
         reader.onerror = () => reject(new Error('Failed to read file'));
         reader.readAsDataURL(file);
       });
-      const res = await apiFetch<{ fileUrl: string }>('/api/uploads', {
-        method: 'POST',
-        body: JSON.stringify({
-          fileName: file.name,
-          mimeType: file.type,
-          dataBase64: base64,
-        }),
-      });
-      setImages((prev) => [...prev, res.fileUrl]);
+      setImages((prev) => [...prev, base64]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+      setError(err instanceof Error ? err.message : 'Unable to attach photo.');
     } finally {
       setUploading(false);
     }
@@ -166,17 +156,19 @@ export function AddPropertyWizardPage() {
     setAmenities((prev) => (prev.includes(am) ? prev.filter((x) => x !== am) : [...prev, am]));
   };
 
-  const saveProperty = async (submitForReview: boolean) => {
+  const saveProperty = (submitForReview: boolean) => {
     if (!title.trim() || title.trim().length < 5) {
       setError('Please provide a descriptive Property Title (at least 5 characters) in Step 1.');
       setStep(1);
       return;
     }
+    if (!vendorProfile || !user) return;
     setSaving(true);
     setError('');
     setSuccessMsg('');
 
-    const payload = {
+    saveVendorPropertyLocal(vendorProfile, user, {
+      id: editId || undefined,
       title: title.trim(),
       purpose,
       category,
@@ -205,25 +197,15 @@ export function AddPropertyWizardPage() {
       images,
       videoUrl,
       submitForReview,
-    };
+    });
 
-    try {
-      if (editId) {
-        await apiFetch(`/api/vendor/properties/${editId}`, { method: 'PATCH', body: JSON.stringify(payload) });
-      } else {
-        await apiFetch('/api/vendor/properties', { method: 'POST', body: JSON.stringify(payload) });
-      }
-      setSuccessMsg(
-        submitForReview
-          ? 'Property submitted to TREM Moderation Queue for publication.'
-          : 'Property draft saved cleanly to your inventory.'
-      );
-      setTimeout(() => navigate('/vendor/properties'), 900);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save property.');
-    } finally {
-      setSaving(false);
-    }
+    setSuccessMsg(
+      submitForReview
+        ? 'Property published locally to your marketplace inventory.'
+        : 'Property draft saved cleanly to your local inventory.'
+    );
+    setSaving(false);
+    setTimeout(() => navigate('/vendor/properties'), 600);
   };
 
   return (
@@ -616,21 +598,19 @@ export function AddPropertyWizardPage() {
 
             {step === 9 && (
               <div className="space-y-4">
-                <h2 className="font-display font-bold text-lg text-[#0B1B48]">Step 9: Publish & Submit for Moderation</h2>
+                <h2 className="font-display font-bold text-lg text-[#0B1B48]">Step 9: Publish Listing</h2>
                 <div className="p-4 rounded-md bg-[#EEF2FA] border border-[#1B3688]/20 space-y-2 text-xs">
                   <div className="font-bold text-[#0B1B48] flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4 text-[#1B3688]" />
-                    <span>Server-Side Entitlement & Verification Check</span>
+                    <span>Workspace Readiness Summary</span>
                   </div>
                   <p className="text-[#334155]">
-                    KYC Status: <strong className="uppercase">{vendorProfile?.verificationStatus || 'unverified'}</strong> ·
-                    Subscription: <strong className="uppercase">{subscription ? subscription.planCode : 'none'}</strong>
+                    Entity: <strong className="uppercase">{vendorProfile?.entityType || 'agency'}</strong> ·
+                    Plan: <strong className="uppercase">{subscription ? subscription.planCode : 'standard'}</strong>
                   </p>
-                  {(!subscription || vendorProfile?.verificationStatus !== 'verified') && (
-                    <p className="text-amber-700 font-semibold">
-                      Note: Save as Draft now, then activate your subscription and complete KYC approval before submitting for public review.
-                    </p>
-                  )}
+                  <p className="text-[#5A6782]">
+                    Publishing saves this listing to your local browser marketplace inventory so you can preview it immediately in Explore and your Agency Microsite.
+                  </p>
                 </div>
               </div>
             )}
@@ -677,7 +657,7 @@ export function AddPropertyWizardPage() {
                     onClick={() => saveProperty(true)}
                     className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-md bg-[#0B1B48] hover:bg-[#1B3688] text-white text-xs font-bold"
                   >
-                    <span>{saving ? 'Submitting...' : 'Submit for Moderation'}</span>
+                    <span>{saving ? 'Publishing...' : 'Publish Listing'}</span>
                   </button>
                 )}
               </div>

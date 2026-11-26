@@ -3,98 +3,59 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Building2, CheckCircle2, KeyRound, Search, ShieldCheck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import type { UserAccount } from '../../shared/types';
+import type { PublicAccountRole } from '../../lib/localStore';
 import { TremLogo } from '../../components/TremLogo';
 
 export function AuthGatewayPage() {
   const [searchParams] = useSearchParams();
-  const initialRole = (searchParams.get('role') as 'seeker' | 'vendor' | 'agency') || 'agency';
+  const rawRole = searchParams.get('role');
+  const initialRole: PublicAccountRole =
+    rawRole === 'seeker' || rawRole === 'vendor' || rawRole === 'agency' ? rawRole : 'agency';
   const initialMode = searchParams.get('mode') === 'login' ? 'login' : 'select';
 
-  const [mode, setMode] = useState<'select' | 'login' | 'forgot'>(initialMode);
-  const [selectedRole, setSelectedRole] = useState<'seeker' | 'vendor' | 'agency'>(initialRole);
+  const [mode, setMode] = useState<'select' | 'login'>(initialMode);
+  const [selectedRole, setSelectedRole] = useState<PublicAccountRole>(initialRole);
 
-  const { apiFetch, setAuthSession } = useApp();
+  const { signInOpen } = useApp();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [passwordVisual, setPasswordVisual] = useState('');
   const [authError, setAuthError] = useState('');
-
-  const [resetEmail, setResetEmail] = useState('');
-  const [resetOtp, setResetOtp] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [sandboxOtp, setSandboxOtp] = useState('');
-  const [resetStage, setResetStage] = useState<'request' | 'confirm' | 'done'>('request');
 
   const nextUrl = searchParams.get('next');
 
-  const routeAfterLogin = (user: UserAccount) => {
-    if (nextUrl) {
+  const routeAfterAccess = (user: UserAccount) => {
+    if (nextUrl && nextUrl.startsWith('/')) {
       navigate(nextUrl);
       return;
     }
-    if (user.role === 'admin') navigate('/admin');
-    else if (user.role === 'seeker') navigate('/seeker');
+    if (user.role === 'seeker') navigate('/seeker');
     else navigate('/vendor');
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthLoading(true);
-    setAuthError('');
-    try {
-      const res = await apiFetch<{ token: string; user: UserAccount }>('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      });
-      await setAuthSession(res.token, res.user);
-      routeAfterLogin(res.user);
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Sign in failed.');
-    } finally {
-      setAuthLoading(false);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !trimmedEmail.includes('@')) {
+      setAuthError('Please enter a valid email address.');
+      return;
     }
-  };
 
-  const fillDemoUser = (demoEmail: string) => {
-    setEmail(demoEmail);
-    setPassword('TremDemo2026!');
-    setMode('login');
-  };
-
-  const handleRequestReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
     setAuthError('');
-    try {
-      const res = await apiFetch<{ sent: boolean; sandboxOtpPreview?: string }>('/api/auth/forgot-password', {
-        method: 'POST',
-        body: JSON.stringify({ email: resetEmail }),
-      });
-      if (res.sandboxOtpPreview) setSandboxOtp(res.sandboxOtpPreview);
-      setResetStage('confirm');
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Unable to send reset code.');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    const firstName = parts[0] || undefined;
+    const lastName = parts.length > 1 ? parts.slice(1).join(' ') : undefined;
 
-  const handleConfirmReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    setAuthError('');
-    try {
-      await apiFetch('/api/auth/reset-password', {
-        method: 'POST',
-        body: JSON.stringify({ email: resetEmail, otp: resetOtp, newPassword }),
-      });
-      setResetStage('done');
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Password reset failed.');
-    } finally {
-      setAuthLoading(false);
-    }
+    // Establish local session without transmitting or storing any password
+    setPasswordVisual('');
+    const localUser = signInOpen({
+      email: trimmedEmail,
+      role: selectedRole,
+      firstName,
+      lastName,
+    });
+    routeAfterAccess(localUser);
   };
 
   return (
@@ -106,7 +67,7 @@ export function AuthGatewayPage() {
           </Link>
           <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#5A6782]">
             <ShieldCheck className="w-3.5 h-3.5 text-[#1B3688]" />
-            <span>Encrypted Account Portal</span>
+            <span>Open Access Marketplace Portal</span>
           </span>
         </div>
 
@@ -123,7 +84,7 @@ export function AuthGatewayPage() {
             </div>
             <h1 className="font-display font-extrabold text-3xl sm:text-4xl">Welcome to TREM</h1>
             <p className="text-sm text-slate-300 mt-1 max-w-xl">
-              The Real Estate Marketplace. Choose your account category or sign into your verified workspace.
+              The Real Estate Marketplace. Choose your account category or enter your Seeker, Vendor, or Agency workspace directly.
             </p>
           </div>
 
@@ -141,10 +102,10 @@ export function AuthGatewayPage() {
               type="button"
               onClick={() => setMode('login')}
               className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
-                mode !== 'select' ? 'bg-[#E8C547] text-[#0B1B48]' : 'text-slate-300 hover:text-white'
+                mode === 'login' ? 'bg-[#E8C547] text-[#0B1B48]' : 'text-slate-300 hover:text-white'
               }`}
             >
-              Log In to Existing Account
+              Log In to Workspace
             </button>
           </div>
         </div>
@@ -155,12 +116,12 @@ export function AuthGatewayPage() {
           <div className="space-y-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#1B3688]">Step 01 of 03</span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#1B3688]">Account Category</span>
                 <h2 className="font-display font-extrabold text-2xl text-[#0B1B48]">Choose Your Account Category</h2>
                 <p className="text-xs text-[#5A6782] mt-0.5">Select the profile type that matches your marketplace role.</p>
               </div>
               <span className="px-3 py-1.5 rounded-md bg-white border border-[#DCE3F0] text-[#1B3688] text-xs font-bold">
-                SCUML & NDPR Compliant Onboarding
+                Immediate Workspace Onboarding
               </span>
             </div>
 
@@ -187,7 +148,7 @@ export function AuthGatewayPage() {
                   </p>
                   <div className="mt-4 pt-4 border-t border-[#DCE3F0] space-y-2 text-xs text-[#334155]">
                     <div className="font-bold text-[10px] uppercase tracking-wider text-[#1B3688]">Account Privileges</div>
-                    <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Free account with full property directory access</span></div>
+                    <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Full property directory access</span></div>
                     <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Direct broker & property owner enquiries</span></div>
                     <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Saved watchlist & inspection booking</span></div>
                   </div>
@@ -227,7 +188,7 @@ export function AuthGatewayPage() {
                     <div className="font-bold text-[10px] uppercase tracking-wider text-[#1B3688]">Account Privileges</div>
                     <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Standard Package (Up to 5 active properties)</span></div>
                     <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Direct WhatsApp & portal lead routing</span></div>
-                    <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Verified Individual Vendor KYC accreditation</span></div>
+                    <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" /><span>Individual Vendor listing & promotion tools</span></div>
                   </div>
                 </div>
                 <button
@@ -267,7 +228,7 @@ export function AuthGatewayPage() {
                     <div className="font-bold text-[10px] uppercase tracking-wider text-[#E8C547]">Agency Privileges</div>
                     <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#E8C547] shrink-0" /><span>Premium Package (Unlimited property listings)</span></div>
                     <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#E8C547] shrink-0" /><span>Branded Public Agency microsite & team agents</span></div>
-                    <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#E8C547] shrink-0" /><span>SCUML & CAC verified corporate badge</span></div>
+                    <div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-[#E8C547] shrink-0" /><span>SCUML & CAC compliance portfolio</span></div>
                   </div>
                 </div>
                 <button
@@ -293,7 +254,7 @@ export function AuthGatewayPage() {
               </div>
               <div className="flex items-center gap-4">
                 <button type="button" onClick={() => setMode('login')} className="text-xs font-bold text-[#1B3688] hover:underline">
-                  Already have an account? Sign In
+                  Already have a profile? Sign In
                 </button>
                 <button
                   type="button"
@@ -312,12 +273,27 @@ export function AuthGatewayPage() {
           <div className="max-w-md mx-auto bg-white rounded-lg border border-[#DCE3F0] p-6 sm:p-8 space-y-5">
             <div>
               <h2 className="font-display font-extrabold text-2xl text-[#0B1B48]">Sign In to TREM Portal</h2>
-              <p className="text-xs text-[#5A6782] mt-1">Access your Seeker watchlist or Vendor / Agency workspace.</p>
+              <p className="text-xs text-[#5A6782] mt-1">
+                Enter your details and choose your workspace category for immediate portal access.
+              </p>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-[#0B1B48] mb-1">Email Address</label>
+                <label className="block text-xs font-bold text-[#0B1B48] mb-1">Account Category</label>
+                <select
+                  value={selectedRole}
+                  onChange={(e) => setSelectedRole(e.target.value as PublicAccountRole)}
+                  className="w-full px-3.5 py-2.5 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm font-semibold text-[#0B1B48]"
+                >
+                  <option value="seeker">Property Seeker & Buyer</option>
+                  <option value="vendor">Independent Vendor & Landlord</option>
+                  <option value="agency">Real Estate Agency & Brokerage</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#0B1B48] mb-1">Email Address *</label>
                 <input
                   type="email"
                   required
@@ -327,19 +303,26 @@ export function AuthGatewayPage() {
                   className="w-full px-3.5 py-2.5 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm"
                 />
               </div>
+
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-[#0B1B48]">Password</label>
-                  <button type="button" onClick={() => setMode('forgot')} className="text-[11px] font-semibold text-[#1B3688] hover:underline">
-                    Forgot password?
-                  </button>
-                </div>
+                <label className="block text-xs font-bold text-[#0B1B48] mb-1">Full Name (Optional)</label>
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="e.g. Babatunde Adeleke"
+                  className="w-full px-3.5 py-2.5 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#0B1B48] mb-1">Passphrase (Optional)</label>
                 <input
                   type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={passwordVisual}
+                  onChange={(e) => setPasswordVisual(e.target.value)}
                   placeholder="••••••••"
+                  autoComplete="off"
                   className="w-full px-3.5 py-2.5 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm"
                 />
               </div>
@@ -348,111 +331,18 @@ export function AuthGatewayPage() {
 
               <button
                 type="submit"
-                disabled={authLoading}
                 className="w-full py-2.5 rounded-md bg-[#0B1B48] hover:bg-[#1B3688] text-white text-xs font-bold"
               >
-                {authLoading ? 'Signing in...' : 'Sign In to Workspace'}
+                Enter {selectedRole === 'seeker' ? 'Seeker Dashboard' : selectedRole === 'vendor' ? 'Vendor Workspace' : 'Agency Workspace'}
               </button>
             </form>
 
-            <div className="pt-4 border-t border-[#DCE3F0] space-y-2">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[#5A6782]">Sandbox Test Accounts</div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => fillDemoUser('apex@trem.ng')}
-                  className="py-2 px-3 rounded-md bg-[#EEF2FA] hover:bg-[#DCE3F0] text-[#0B1B48] text-xs font-semibold"
-                >
-                  Demo Agency (Apex)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillDemoUser('seeker@trem.ng')}
-                  className="py-2 px-3 rounded-md bg-[#EEF2FA] hover:bg-[#DCE3F0] text-[#0B1B48] text-xs font-semibold"
-                >
-                  Demo Seeker
-                </button>
-              </div>
+            <div className="pt-4 border-t border-[#DCE3F0] flex items-center justify-between text-xs">
+              <span className="text-[#5A6782]">Need a full profile setup?</span>
+              <Link to={`/auth/register?role=${selectedRole}`} className="font-bold text-[#1B3688] hover:underline">
+                Register Profile →
+              </Link>
             </div>
-          </div>
-        )}
-
-        {mode === 'forgot' && (
-          <div className="max-w-md mx-auto bg-white rounded-lg border border-[#DCE3F0] p-6 sm:p-8 space-y-5">
-            <div>
-              <h2 className="font-display font-extrabold text-2xl text-[#0B1B48]">Recover Portal Access</h2>
-              <p className="text-xs text-[#5A6782] mt-1">Verify your email with a 6-digit OTP to set a new password.</p>
-            </div>
-
-            {resetStage === 'request' && (
-              <form onSubmit={handleRequestReset} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold mb-1">Registered Email</label>
-                  <input
-                    type="email"
-                    required
-                    value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm"
-                  />
-                </div>
-                {authError && <p className="text-xs text-red-600">{authError}</p>}
-                <button type="submit" disabled={authLoading} className="w-full py-2.5 rounded-md bg-[#0B1B48] text-white text-xs font-bold">
-                  Send 6-Digit Recovery Code
-                </button>
-              </form>
-            )}
-
-            {resetStage === 'confirm' && (
-              <form onSubmit={handleConfirmReset} className="space-y-4">
-                {sandboxOtp && (
-                  <div className="p-3 rounded-md bg-[#EEF2FA] border border-[#1B3688]/20 text-xs">
-                    Sandbox OTP Code: <strong className="font-mono">{sandboxOtp}</strong>
-                  </div>
-                )}
-                <div>
-                  <label className="block text-xs font-bold mb-1">6-Digit OTP</label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={6}
-                    value={resetOtp}
-                    onChange={(e) => setResetOtp(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold mb-1">New Password (min 8 chars)</label>
-                  <input
-                    type="password"
-                    required
-                    minLength={8}
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-md bg-[#F4F6FA] border border-[#DCE3F0] text-sm"
-                  />
-                </div>
-                {authError && <p className="text-xs text-red-600">{authError}</p>}
-                <button type="submit" disabled={authLoading} className="w-full py-2.5 rounded-md bg-[#0B1B48] text-white text-xs font-bold">
-                  Update Password
-                </button>
-              </form>
-            )}
-
-            {resetStage === 'done' && (
-              <div className="space-y-4">
-                <div className="p-3 rounded-md bg-[#DCFCE7] text-[#15803D] text-xs font-bold">
-                  Password updated successfully. You may now sign in.
-                </div>
-                <button type="button" onClick={() => setMode('login')} className="w-full py-2.5 rounded-md bg-[#0B1B48] text-white text-xs font-bold">
-                  Back to Sign In
-                </button>
-              </div>
-            )}
-
-            <button type="button" onClick={() => setMode('login')} className="text-xs font-semibold text-[#1B3688] hover:underline">
-              ← Back to Sign In
-            </button>
           </div>
         )}
       </main>

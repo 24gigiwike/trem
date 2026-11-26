@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Filter, LayoutGrid, List, Search, ShieldCheck, X } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import type { PropertyListing } from '../../shared/types';
+import { queryLocalProperties } from '../../lib/localStore';
 import { PropertyCard } from '../../components/PropertyCard';
 
 export function ExplorePage() {
@@ -47,7 +48,25 @@ export function ExplorePage() {
   };
 
   const fetchCatalogue = useCallback(async () => {
-    setLoading(true);
+    const localRes = queryLocalProperties({
+      q,
+      category,
+      purpose,
+      titleDoc,
+      beds: Number(beds || 0),
+      minPrice: minPrice ? Number(minPrice) : undefined,
+      maxPrice: maxPrice ? Number(maxPrice) : undefined,
+      verifiedOnly,
+      sort,
+      page,
+      limit: 12,
+    });
+    setItems(localRes.items);
+    setTotal(localRes.total);
+    setTotalPages(localRes.totalPages);
+    setCounts(localRes.categoryCounts);
+    setLoading(false);
+
     try {
       const qs = searchParams.toString();
       const res = await apiFetch<{
@@ -56,16 +75,16 @@ export function ExplorePage() {
         totalPages: number;
         categoryCounts: Record<string, number>;
       }>(`/api/public/properties?${qs}`);
-      setItems(res.items);
-      setTotal(res.total);
-      setTotalPages(res.totalPages);
-      setCounts(res.categoryCounts || {});
+      if (res.items && res.items.length > localRes.items.length) {
+        setItems(res.items);
+        setTotal(res.total);
+        setTotalPages(res.totalPages);
+        setCounts(res.categoryCounts || localRes.categoryCounts);
+      }
     } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
+      // Local catalogue already rendered seamlessly
     }
-  }, [apiFetch, searchParams]);
+  }, [apiFetch, searchParams, q, category, purpose, titleDoc, beds, minPrice, maxPrice, verifiedOnly, sort, page]);
 
   useEffect(() => {
     fetchCatalogue();

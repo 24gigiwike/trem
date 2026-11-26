@@ -2,13 +2,18 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Lock, Megaphone, Sparkles } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import {
+  activatePromotionLocal,
+  getBillingOverviewLocal,
+  getVendorPropertiesLocal,
+} from '../../lib/localStore';
 import type { PromotionRecord, PropertyListing } from '../../shared/types';
 import { calculatePromotionQuote, PROMOTION_PACKAGES } from '../../shared/commercial';
 import { PortalShell } from '../../components/PortalShell';
 import { SafeImage } from '../../components/SafeImage';
 
 export function VendorPromotionPage() {
-  const { apiFetch } = useApp();
+  const { user, vendorProfile, refreshSession } = useApp();
   const [searchParams] = useSearchParams();
 
   const [properties, setProperties] = useState<PropertyListing[]>([]);
@@ -21,31 +26,27 @@ export function VendorPromotionPage() {
   const [error, setError] = useState('');
 
   const loadData = () => {
-    Promise.all([
-      apiFetch<{ properties: PropertyListing[] }>('/api/vendor/properties'),
-      apiFetch<{ promotions: PromotionRecord[] }>('/api/billing/overview'),
-    ])
-      .then(([pRes, bRes]) => {
-        const eligible = pRes.properties.filter((p) => p.status === 'published');
-        setProperties(eligible);
-        if (!selectedPropertyId && eligible[0]) {
-          setSelectedPropertyId(eligible[0].id);
-        }
-        setCampaigns(bRes.promotions);
-      })
-      .catch(() => {});
+    if (!vendorProfile) return;
+    const allProps = getVendorPropertiesLocal(vendorProfile.id);
+    const eligible = allProps.filter((p) => p.status === 'published');
+    setProperties(eligible);
+    if ((!selectedPropertyId || !eligible.some((p) => p.id === selectedPropertyId)) && eligible[0]) {
+      setSelectedPropertyId(eligible[0].id);
+    }
+    const billing = getBillingOverviewLocal(vendorProfile.id);
+    setCampaigns(billing.promotions);
   };
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [vendorProfile?.id]);
 
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId) || properties[0];
   const quote = calculatePromotionQuote(packageCode);
 
   const handleLaunchPromotion = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProperty) {
+    if (!selectedProperty || !vendorProfile || !user) {
       setError('Select a published property to promote.');
       return;
     }
@@ -53,18 +54,15 @@ export function VendorPromotionPage() {
     setError('');
     setStatusMsg('');
     try {
-      const orderRes = await apiFetch<{ order: { reference: string } }>('/api/billing/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          orderType: 'promotion',
-          propertyId: selectedProperty.id,
-          packageCode,
-          paymentMethod,
-          idempotencyKey: `promo_${selectedProperty.id}_${packageCode}_${Date.now()}`,
-        }),
-      });
-      await apiFetch(`/api/billing/sandbox-confirm/${orderRes.order.reference}`, { method: 'POST' });
-      setStatusMsg(`Promotion activated (${orderRes.order.reference}). ${selectedProperty.refCode} is now boosted.`);
+      const result = activatePromotionLocal(
+        user.id,
+        vendorProfile.id,
+        selectedProperty.id,
+        packageCode,
+        paymentMethod
+      );
+      await refreshSession();
+      setStatusMsg(`Promotion activated (${result.reference}). ${selectedProperty.refCode} is now boosted.`);
       loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to activate promotion.');
@@ -181,7 +179,7 @@ export function VendorPromotionPage() {
               <h3 className="font-display font-bold text-lg text-[#0B1B48]">Payment & Activation Method</h3>
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#16A34A]">
                 <Lock className="w-3.5 h-3.5" />
-                <span>Sandbox Webhook Verified</span>
+                <span>Instant Local Activation</span>
               </span>
             </div>
 
@@ -204,7 +202,7 @@ export function VendorPromotionPage() {
             </div>
 
             <p className="text-xs text-[#5A6782]">
-              Promotion entitlement activates in Nigerian Naira (₦) strictly after server-side webhook signature confirmation.
+              Promotion entitlement activates immediately in Nigerian Naira (₦) within your local workspace. No live card charge occurs.
             </p>
           </div>
 

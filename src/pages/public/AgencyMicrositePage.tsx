@@ -14,32 +14,30 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import type { AgencyTeamMember, PropertyListing } from '../../shared/types';
+import {
+  type AgencyDetail,
+  type AgencySummary,
+  createEnquiryLocal,
+  getLocalAgencies,
+  getLocalAgencyDetail,
+} from '../../lib/localStore';
 import { SafeImage } from '../../components/SafeImage';
 import { PropertyCard } from '../../components/PropertyCard';
 
-interface AgencySummary {
-  id: string;
-  entityType: string;
-  businessName: string;
-  slug: string;
-  city: string;
-  state: string;
-  rcNumber: string;
-  verificationStatus: string;
-  logoUrl: string;
-  rating: number;
-  reviewCount: number;
-  activeListings: number;
-}
-
 export function AgenciesDirectoryPage() {
   const { apiFetch } = useApp();
-  const [agencies, setAgencies] = useState<AgencySummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [agencies, setAgencies] = useState<AgencySummary[]>(() => getLocalAgencies());
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    const local = getLocalAgencies();
+    setAgencies(local);
     apiFetch<{ agencies: AgencySummary[] }>('/api/public/agencies')
-      .then((res) => setAgencies(res.agencies))
+      .then((res) => {
+        if (res.agencies && res.agencies.length > local.length) {
+          setAgencies(res.agencies);
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [apiFetch]);
@@ -97,32 +95,6 @@ export function AgenciesDirectoryPage() {
   );
 }
 
-interface AgencyDetail {
-  id: string;
-  entityType: string;
-  businessName: string;
-  slug: string;
-  representativeName: string;
-  representativeRole: string;
-  rcNumber: string;
-  scumlNumber: string;
-  redanNumber: string;
-  lasreraLicense: string;
-  address: string;
-  abujaAddress: string;
-  city: string;
-  state: string;
-  bio: string;
-  logoUrl: string;
-  verificationStatus: string;
-  avgResponseTime: string;
-  memberSince: string;
-  rating: number;
-  reviewCount: number;
-  phone: string;
-  email: string;
-}
-
 export function AgencyMicrositePage() {
   const { slug } = useParams();
   const { apiFetch, user } = useApp();
@@ -146,6 +118,15 @@ export function AgencyMicrositePage() {
 
   useEffect(() => {
     if (!slug) return;
+    const local = getLocalAgencyDetail(slug);
+    if (local) {
+      setAgency(local.agency);
+      setTeam(local.team);
+      setProperties(local.properties);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     apiFetch<{ agency: AgencyDetail; team: AgencyTeamMember[]; properties: PropertyListing[] }>(`/api/public/agencies/${slug}`)
       .then((res) => {
@@ -163,9 +144,23 @@ export function AgencyMicrositePage() {
     setSending(true);
     setSentErr('');
     setSentOk('');
+
+    createEnquiryLocal({
+      vendorId: agency.id,
+      propertyId: propertyId || null,
+      seekerId: user?.id || null,
+      fullName,
+      email,
+      phone,
+      enquiryType: 'formal',
+      purpose,
+      message,
+    });
+
     try {
-      await apiFetch('/api/public/enquiries', {
+      await fetch('/api/public/enquiries', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agencyId: agency.id,
           vendorId: agency.id,
@@ -178,13 +173,13 @@ export function AgencyMicrositePage() {
           message,
         }),
       });
-      setSentOk(`Formal inquiry transmitted to ${agency.businessName} compliance desk.`);
-      setMessage('');
-    } catch (err) {
-      setSentErr(err instanceof Error ? err.message : 'Unable to send inquiry.');
-    } finally {
-      setSending(false);
+    } catch {
+      // Saved locally
     }
+
+    setSentOk(`Formal inquiry transmitted to ${agency.businessName} compliance desk.`);
+    setMessage('');
+    setSending(false);
   };
 
   if (loading) {

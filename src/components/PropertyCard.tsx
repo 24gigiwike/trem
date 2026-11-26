@@ -1,22 +1,17 @@
 import { Bookmark, BedDouble, Bath, Maximize2, MapPin, ShieldCheck, MessageCircle, ArrowUpRight } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import type { PropertyListing } from '../shared/types';
 import { formatMoney } from '../shared/commercial';
 import { useApp } from '../context/AppContext';
 import { SafeImage } from './SafeImage';
 
 export function PropertyCard({ property, compact = false }: { property: PropertyListing; compact?: boolean }) {
-  const { savedIds, toggleSaved, user } = useApp();
-  const navigate = useNavigate();
+  const { savedIds, toggleSaved } = useApp();
   const isSaved = savedIds.includes(property.id);
 
   const handleSave = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!user) {
-      navigate('/auth?next=' + encodeURIComponent(`/properties/${property.refCode}`));
-      return;
-    }
     await toggleSaved(property.id);
   };
 
